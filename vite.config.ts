@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 
-// Lib mode, multi-entry: `.` -> dist/index.js, `./react` -> dist/react/index.js.
+// Lib mode, multi-entry: `.` -> dist/index.js, `./react` -> dist/react/index.js,
+// `./matter` -> dist/matter/index.js.
 // Keeps adapters/react out of non-React consumers' bundles (exports map in package.json).
 export default defineConfig({
   build: {
@@ -12,6 +13,7 @@ export default defineConfig({
       entry: {
         index: resolve(__dirname, 'src/index.ts'),
         'react/index': resolve(__dirname, 'src/adapters/react/index.ts'),
+        'matter/index': resolve(__dirname, 'src/matter/index.ts'),
       },
       formats: ['es'],
     },

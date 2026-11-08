@@ -35,6 +35,37 @@ to avoid duplicate THREE copies / dual GL contexts. `react`, `gsap`, `lenis` are
 optional peers, only needed if the consumer uses the `cc-webgl/react` adapter subpath
 or attaches a GSAP/Lenis bridge.
 
+## Matter (`cc-webgl/matter`)
+
+Optional subpath: forms made of particles that can hold together, shatter, melt or
+diffuse. Not part of the core barrel; importing it is the only way to pay for it.
+
+```ts
+import { sampleMatter, createMatterUniforms, createMatterMaterial, FluidPass, matterFormWeights, matterQuality } from 'cc-webgl/matter';
+
+const uniforms = createMatterUniforms();          // one object drives every pass
+const particles = sampleMatter(meshGeometry, 60_000 * matterQuality(quality.profile).particleScale, { seed: 1 });
+scene.add(new THREE.Points(particles, createMatterMaterial(uniforms)));   // Solid + Gas sprites
+const fluid = new FluidPass(camera, uniforms);    // Liquid, after the RenderPass
+fluid.setGeometry(particles);
+composer.addPass(fluid);
+
+// per frame (from FrameScheduler):
+uniforms.uState.value = form;                     // 0 Solid, 1 Liquid, 2 Gas (fractional crossfades)
+uniforms.uDisperse.value = disperse;              // 0 held, 1 apart
+const w = matterFormWeights(form);
+fluid.enabled = w.liquid > 0.01; fluid.mix = w.liquid;
+```
+
+- **Solid** cracks into irregular mixed-size fragments that crumble to dust.
+- **Liquid** slumps, drips and settles into a puddle, rendered as one refracting
+  surface by `FluidPass`. Set `shimmer` (0–1) to ripple a settled puddle.
+- **Gas** diffuses into fine wisps.
+- Cursor (`uMode`): `MatterCursor.push | attract | vortex | scatter | wake | off`, with
+  `uPointer`, `uPush`, `uStrength`, `uReachK`; Wake reads `uTrail` (16 marks, newest first).
+
+Forma's `prototypes/matter/index.html` is the reference for how it should look.
+
 ## Install / Build
 
 From `Projects/cc-webgl/`:
@@ -113,7 +144,7 @@ cc-webgl/
 ├── README.md                 ← this file
 ├── .architect-blueprint.md   ← Phase 0 technical blueprint (file list, interfaces, build tooling, port map)
 ├── package.json / tsconfig.json / vite.config.ts / vitest.config.ts
-├── src/                      ← core, input, resources, events, errors, adapters/react
+├── src/                      ← core, input, resources, events, errors, adapters/react, matter
 ├── tests/                    ← vitest unit tests (math/logic only, no WebGL)
 ├── example/                  ← Cube Stress Test proof-of-concept (not published)
 ├── active/                   ← work in progress
