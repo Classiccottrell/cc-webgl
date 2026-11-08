@@ -11,6 +11,10 @@
     "./react": {
       "types": "./dist/adapters/react/index.d.ts",
       "import": "./dist/react/index.js"
+    },
+    "./matter": {
+      "types": "./dist/matter/index.d.ts",
+      "import": "./dist/matter/index.js"
     }
   },
   "files": [
@@ -30,9 +34,15 @@
     "lenis": ">=1"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true },
-    "gsap": { "optional": true },
-    "lenis": { "optional": true }
+    "react": {
+      "optional": true
+    },
+    "gsap": {
+      "optional": true
+    },
+    "lenis": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/three": "^0.185.0",
