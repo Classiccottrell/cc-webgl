@@ -19,3 +19,4 @@ export type { FluidPassOptions } from './FluidPass.js';
 export { matterQuality } from './quality.js';
 export type { MatterQuality } from './quality.js';
 export { viewUnprojection, pixelsPerUnit } from './projection.js';
+export { MatterFlow } from './flow.js';

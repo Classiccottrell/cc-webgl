@@ -41,13 +41,31 @@ export interface MatterUniforms {
   /** Wake marks: xy in NDC, z strength 0..1 (newest first). */
   uTrail: U<THREE.Vector3[]>;
   uOpacity: U<number>;
+  /** A screen-space flow for dispersed matter to ride (see `MatterFlow`): xy directions
+   * encoded 0..1, x right and y up. */
+  uFlow: U<THREE.Texture>;
+  /** How far matter travels along the flow, in viewport heights. 0 turns the flow off. */
+  uFlowGain: U<number>;
+  /** Journeys along the flow per second, before per-particle variation. */
+  uFlowRate: U<number>;
   uColA: U<THREE.Color>;
   uColB: U<THREE.Color>;
   uColC: U<THREE.Color>;
 }
 
+/** Still water: what `uFlow` holds until a consumer supplies a flow. Shared, never disposed. */
+let stillWater: THREE.DataTexture | null = null;
+function stillFlow(): THREE.DataTexture {
+  if (!stillWater) {
+    stillWater = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    stillWater.needsUpdate = true;
+  }
+  return stillWater;
+}
+
 export function createMatterUniforms(): MatterUniforms {
   return {
+    uFlow: { value: stillFlow() }, uFlowGain: { value: 0 }, uFlowRate: { value: 0.11 },
     uTime: { value: 0 }, uState: { value: 0 }, uDisperse: { value: 0 }, uSpin: { value: 0 }, uFloor: { value: -1.5 },
     uSize: { value: 0.022 }, uScale: { value: 400 }, uPixelRatio: { value: 1 }, uAspect: { value: 1 },
     uPointer: { value: new THREE.Vector2(9, 9) }, uPush: { value: 0 }, uMode: { value: MatterCursor.push },
@@ -68,6 +86,7 @@ export function createMatterUniforms(): MatterUniforms {
 export const MATTER_VERTEX = /* glsl */ `
 uniform float uTime,uDisperse,uState,uSpin,uFloor,uSize,uScale,uPixelRatio,uAspect,uPush,uStrength,uReachK;
 uniform int uMode; uniform vec2 uPointer; uniform vec3 uTrail[${WAKE_TRAIL_LENGTH}];
+uniform sampler2D uFlow; uniform float uFlowGain,uFlowRate;
 attribute float aSeed; attribute vec3 aNormal; attribute vec3 aChunkC; attribute vec4 aChunkR;
 varying float vAlpha; varying float vSeed; varying float vDepth; varying float vBoost;
 #ifdef DEPTH_PASS
@@ -118,6 +137,20 @@ void main(){
   if(uMode==0) mv.xy+=dir*fall*.55*(.4+aSeed);
   if(uMode==1) mv.xy-=dir*fall*.5*(.4+aSeed)*smoothstep(0.,.12,length(dv));
   if(uMode==2) mv.xy+=(tang*.75-dir*.15)*fall*(.4+aSeed);
+  // Riding the page's flow: gas, and solid matter once it has crumbled to dust, travel
+  // along it. Positions are stateless, so each particle makes the journey on a loop of
+  // its own length and phase, fading out at the far end and back in at its place.
+  float flowFade=1.;
+  if(uFlowGain>0.){
+    float ride=clamp(e*(wG+wS*er),0.,1.);
+    if(ride>.001){
+      float life=fract(t*uFlowRate*(.6+aSeed*.8)+aSeed*7.31);
+      vec2 q=ndc; float stepLen=uFlowGain*ride*life*2./5.;
+      for(int i=0;i<5;i++){ vec2 f=texture2D(uFlow,clamp(q*.5+.5,0.,1.)).xy*(255./127.)-(128./127.); f.x/=uAspect; q+=f*stepLen; }
+      mv.xy+=(q-ndc)*vec2(1./projectionMatrix[0][0],1./projectionMatrix[1][1])*(-mv.z);
+      flowFade=mix(1.,sin(3.14159265*life),ride);
+    }
+  }
   gl_Position=projectionMatrix*mv;
 #ifdef DEPTH_PASS
   float rad=uRadius*(.75+aSeed*.5)*mix(1.,.85,drop);
@@ -127,7 +160,7 @@ void main(){
   gl_PointSize=size*uPixelRatio*uScale/-mv.z;
 #endif
   // Sprites are hidden in Liquid: the FluidPass draws the liquid from the same particles.
-  vAlpha=mix(.6,1.,e)*(1.-wG*e*.5)*(1.-wL); vSeed=aSeed; vDepth=-mv.z;
+  vAlpha=mix(.6,1.,e)*(1.-wG*e*.5)*(1.-wL)*flowFade; vSeed=aSeed; vDepth=-mv.z;
   vBoost=1.+min(local,1.)*5.+fall*1.5;
 }`;
 
