@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import {
   sampleMatter, seededRandom, DEFAULT_FRAGMENTS, createMatterUniforms, createMatterMaterial,
   createMatterLiquidMaterials, matterFormWeights, matterQuality, FluidPass, MATTER_VERTEX, MatterCursor,
-  viewUnprojection, pixelsPerUnit,
+  viewUnprojection, pixelsPerUnit, MatterFlow,
 } from '../src/matter/index.js';
 import { QualityManager } from '../src/core/QualityManager.js';
 
@@ -215,5 +215,48 @@ describe('viewUnprojection / pixelsPerUnit', () => {
     expect(u.z).not.toBe(0);
     expect(pass.liquidUniforms.uDepthScale.value).toBeCloseTo(pixelsPerUnit(camera.projectionMatrix, H), 9);
     pass.dispose();
+  });
+});
+
+describe('MatterFlow', () => {
+  it('is off by default: still water and zero gain', () => {
+    const u = createMatterUniforms();
+    expect(u.uFlowGain.value).toBe(0);
+    expect(u.uFlow.value).toBeInstanceOf(THREE.DataTexture);
+    expect(Array.from((u.uFlow.value as THREE.DataTexture).image.data as Uint8Array).slice(0, 2)).toEqual([128, 128]);
+    expect(createMatterUniforms().uFlow.value).toBe(u.uFlow.value);
+    expect(MATTER_VERTEX).toContain('uniform sampler2D uFlow');
+  });
+
+  it('stores a direction per cell, clamped, with zero exact and bad values stilled', () => {
+    const flow = new MatterFlow(4, 3);
+    expect(flow.at(2, 1)).toEqual([0, 0]);
+    const seen: [number, number][] = [];
+    flow.fill((u, v, out) => {
+      seen.push([u, v]);
+      if (u < 0.25) { out[0] = 5; out[1] = -5; }
+      else if (u < 0.5) { out[0] = Number.NaN; out[1] = Infinity; }
+      else if (u < 0.75) { out[0] = 0.5; out[1] = -0.25; }
+    });
+    expect(seen).toHaveLength(12);
+    expect(seen[0]).toEqual([0.125, 1 / 6]);
+    expect(flow.at(0, 0)).toEqual([1, -1]);
+    expect(flow.at(1, 2)).toEqual([0, 0]);
+    expect(flow.at(2, 1)[0]).toBeCloseTo(0.5, 2);
+    expect(flow.at(2, 1)[1]).toBeCloseTo(-0.25, 2);
+    expect(flow.at(3, 0)).toEqual([0, 0]);
+    flow.clear();
+    expect(flow.at(0, 0)).toEqual([0, 0]);
+    flow.dispose();
+  });
+
+  it('shares its uniforms with the liquid passes', () => {
+    const u = createMatterUniforms();
+    const liquid = createMatterLiquidMaterials(u);
+    const flow = new MatterFlow();
+    u.uFlow.value = flow.texture;
+    expect(liquid.uniforms.uFlowGain).toBe(u.uFlowGain);
+    expect(liquid.uniforms.uFlow.value).toBe(flow.texture);
+    flow.dispose();
   });
 });

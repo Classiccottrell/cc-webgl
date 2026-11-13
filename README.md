@@ -63,6 +63,10 @@ fluid.enabled = w.liquid > 0.01; fluid.mix = w.liquid;
 - **Gas** diffuses into fine wisps.
 - Cursor (`uMode`): `MatterCursor.push | attract | vortex | scatter | wake | off`, with
   `uPointer`, `uPush`, `uStrength`, `uReachK`; Wake reads `uTrail` (16 marks, newest first).
+- Flow: dispersed matter can ride a current supplied from outside. Fill a `MatterFlow`
+  grid each frame (`flow.fill((u, v, out) => …)`, directions across the viewport), set
+  `uniforms.uFlow.value = flow.texture` and raise `uFlowGain` (viewport heights
+  travelled; 0 is off). Gas and crumbled dust travel along it on a loop.
 - Lens: `FluidPass` reads the camera's projection matrix every frame, so a view offset
   (`camera.setViewOffset`, an object framed clear of a UI panel) or a zoom shades the
   same as a centred lens. Size sprites the same way: `uScale = pixelsPerUnit(camera.projectionMatrix, heightPx)`.
