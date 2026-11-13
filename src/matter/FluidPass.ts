@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { createMatterLiquidMaterials, type MatterLiquidUniforms, type MatterUniforms } from './materials.js';
+import { pixelsPerUnit, viewUnprojection } from './projection.js';
 
 const QUAD_VS = /* glsl */ `varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }`;
 
@@ -90,13 +91,15 @@ void main(){
     this.compositeMaterial = new THREE.ShaderMaterial({
       uniforms: {
         tDiffuse: { value: null }, tFluid: { value: null }, tThick: { value: null },
-        uTexel: { value: new THREE.Vector2() }, uTan: { value: new THREE.Vector2(1, 1) },
+        uTexel: { value: new THREE.Vector2() }, uUnproj: { value: new THREE.Vector4(1, 1, 0, 0) },
         uMix: { value: 0 }, uTime: { value: 0 }, uShimmer: { value: 0 },
         uTint: { value: new THREE.Color(0x958cd6) }, uSkyLo: { value: new THREE.Color(0x1d1a36) }, uSkyHi: { value: new THREE.Color(0x888599) },
       },
       vertexShader: QUAD_VS,
-      fragmentShader: /* glsl */ `uniform sampler2D tDiffuse,tFluid,tThick; uniform vec2 uTexel,uTan; uniform float uMix,uTime,uShimmer; uniform vec3 uTint,uSkyLo,uSkyHi; varying vec2 vUv;
-vec3 vpos(vec2 uv,float d){ return vec3((uv*2.-1.)*uTan,-1.)*d; }
+      fragmentShader: /* glsl */ `uniform sampler2D tDiffuse,tFluid,tThick; uniform vec2 uTexel; uniform vec4 uUnproj; uniform float uMix,uTime,uShimmer; uniform vec3 uTint,uSkyLo,uSkyHi; varying vec2 vUv;
+// View position from the camera's real projection, so an off-centre or zoomed lens
+// (see viewUnprojection) reconstructs straight.
+vec3 vpos(vec2 uv,float d){ return vec3((uv*2.-1.+uUnproj.zw)*uUnproj.xy,-1.)*d; }
 vec3 edge(vec2 uv,vec3 P,vec2 o){
   float a=texture2D(tFluid,uv+o).r, b=texture2D(tFluid,uv-o).r;
   vec3 f=a>0.?vpos(uv+o,a)-P:vec3(0.), r=b>0.?P-vpos(uv-o,b):vec3(0.);
@@ -179,9 +182,9 @@ void main(){
   }
 
   private updateCamera(targetHeight: number): void {
-    const tanHalf = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    (this.compositeMaterial.uniforms.uTan!.value as THREE.Vector2).set(tanHalf * this.camera.aspect, tanHalf);
-    this.liquidUniforms.uDepthScale.value = targetHeight / (2 * tanHalf);
+    const projection = this.camera.projectionMatrix;
+    viewUnprojection(projection, this.compositeMaterial.uniforms.uUnproj!.value as THREE.Vector4);
+    this.liquidUniforms.uDepthScale.value = pixelsPerUnit(projection, targetHeight);
   }
 
   override render(renderer: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget, readBuffer: THREE.WebGLRenderTarget): void {

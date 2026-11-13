@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   sampleMatter, seededRandom, DEFAULT_FRAGMENTS, createMatterUniforms, createMatterMaterial,
   createMatterLiquidMaterials, matterFormWeights, matterQuality, FluidPass, MATTER_VERTEX, MatterCursor,
+  viewUnprojection, pixelsPerUnit,
 } from '../src/matter/index.js';
 import { QualityManager } from '../src/core/QualityManager.js';
 
@@ -155,5 +156,64 @@ describe('FluidPass', () => {
     expect(disposeGeometry).not.toHaveBeenCalled();
     disposeTarget.mockRestore();
     disposeMaterial.mockRestore();
+  });
+});
+
+describe('viewUnprojection / pixelsPerUnit', () => {
+  const W = 1400, H = 900;
+  const cameras: Record<string, () => THREE.PerspectiveCamera> = {
+    centred: () => new THREE.PerspectiveCamera(50, W / H, 0.1, 100),
+    zoomed: () => { const c = new THREE.PerspectiveCamera(35, W / H, 0.1, 100); c.zoom = 1.7; return c; },
+    // Framed clear of a 360 px panel and a 60 px top bar, as Forma's editor does.
+    'off-centre': () => { const c = new THREE.PerspectiveCamera(50, W / H, 0.1, 100); c.setViewOffset(W, H, 180, -30, W, H); return c; },
+    'off-centre and zoomed': () => { const c = new THREE.PerspectiveCamera(50, W / H, 0.1, 100); c.zoom = 0.8; c.setViewOffset(W, H, -220, 90, W, H); return c; },
+  };
+  const points = [new THREE.Vector3(0, 0, -6), new THREE.Vector3(1.1, -0.7, -4.2), new THREE.Vector3(-2.3, 1.6, -9)];
+  /** What the composite shader's vpos() computes. */
+  const reconstruct = (ndc: THREE.Vector3, depth: number, u: THREE.Vector4) =>
+    new THREE.Vector3((ndc.x + u.z) * u.x, (ndc.y + u.w) * u.y, -1).multiplyScalar(depth);
+
+  for (const [name, make] of Object.entries(cameras)) {
+    it(`recovers view positions from NDC and depth with a ${name} lens`, () => {
+      const camera = make();
+      camera.updateProjectionMatrix();
+      const u = viewUnprojection(camera.projectionMatrix, new THREE.Vector4());
+      for (const p of points) {
+        const ndc = p.clone().applyMatrix4(camera.projectionMatrix);
+        expect(reconstruct(ndc, -p.z, u).distanceTo(p)).toBeLessThan(1e-9);
+      }
+    });
+
+    it(`sizes a world unit in pixels with a ${name} lens`, () => {
+      const camera = make();
+      camera.updateProjectionMatrix();
+      const a = new THREE.Vector3(0, 0, -5).applyMatrix4(camera.projectionMatrix);
+      const b = new THREE.Vector3(0, 1, -5).applyMatrix4(camera.projectionMatrix);
+      expect(pixelsPerUnit(camera.projectionMatrix, H) / 5).toBeCloseTo(((b.y - a.y) / 2) * H, 6);
+    });
+  }
+
+  it('differs from the centred-lens shortcut exactly when the lens is off-centre or zoomed', () => {
+    const shortcut = (c: THREE.PerspectiveCamera) => { const t = Math.tan(THREE.MathUtils.degToRad(c.fov / 2)); return new THREE.Vector4(t * c.aspect, t, 0, 0); };
+    for (const [name, make] of Object.entries(cameras)) {
+      const camera = make();
+      camera.updateProjectionMatrix();
+      const u = viewUnprojection(camera.projectionMatrix, new THREE.Vector4());
+      const same = u.clone().sub(shortcut(camera)).length() < 1e-9;
+      expect(same, name).toBe(name === 'centred');
+    }
+  });
+
+  it('FluidPass reads its unprojection from the camera each frame', () => {
+    const camera = cameras['off-centre']!();
+    camera.updateProjectionMatrix();
+    const pass = new FluidPass(camera, createMatterUniforms());
+    pass.setSize(W, H);
+    const composite = (pass as unknown as { compositeMaterial: THREE.ShaderMaterial }).compositeMaterial;
+    const u = composite.uniforms.uUnproj!.value as THREE.Vector4;
+    expect(u.z).toBeCloseTo(camera.projectionMatrix.elements[8]!, 12);
+    expect(u.z).not.toBe(0);
+    expect(pass.liquidUniforms.uDepthScale.value).toBeCloseTo(pixelsPerUnit(camera.projectionMatrix, H), 9);
+    pass.dispose();
   });
 });

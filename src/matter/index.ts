@@ -18,3 +18,4 @@ export { FluidPass } from './FluidPass.js';
 export type { FluidPassOptions } from './FluidPass.js';
 export { matterQuality } from './quality.js';
 export type { MatterQuality } from './quality.js';
+export { viewUnprojection, pixelsPerUnit } from './projection.js';
