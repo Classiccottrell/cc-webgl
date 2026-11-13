@@ -63,6 +63,9 @@ fluid.enabled = w.liquid > 0.01; fluid.mix = w.liquid;
 - **Gas** diffuses into fine wisps.
 - Cursor (`uMode`): `MatterCursor.push | attract | vortex | scatter | wake | off`, with
   `uPointer`, `uPush`, `uStrength`, `uReachK`; Wake reads `uTrail` (16 marks, newest first).
+- Lens: `FluidPass` reads the camera's projection matrix every frame, so a view offset
+  (`camera.setViewOffset`, an object framed clear of a UI panel) or a zoom shades the
+  same as a centred lens. Size sprites the same way: `uScale = pixelsPerUnit(camera.projectionMatrix, heightPx)`.
 
 Forma's `prototypes/matter/index.html` is the reference for how it should look.
 
