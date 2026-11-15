@@ -143,6 +143,36 @@ describe('FluidPass', () => {
     pass.dispose();
   });
 
+  it('takes its finish from a look, clamped, and keeps what a partial look leaves out', () => {
+    const pass = new FluidPass(new THREE.PerspectiveCamera(), createMatterUniforms());
+    const u = (pass as unknown as { compositeMaterial: THREE.ShaderMaterial }).compositeMaterial.uniforms;
+    pass.setLook({ tint: 0xffd24a, metal: 3, opacity: -2, roughness: 0.3 });
+    expect(u.uMetal!.value).toBe(1);
+    expect(u.uOpaque!.value).toBe(0);
+    expect(u.uRough!.value).toBeCloseTo(0.3);
+    expect((u.uTint!.value as THREE.Color).getHex()).toBe(0xffd24a);
+    pass.setLook({ metal: 0.5 });
+    expect(u.uMetal!.value).toBe(0.5);
+    expect(u.uRough!.value).toBeCloseTo(0.3); // untouched
+    pass.dispose();
+  });
+
+  it('reflects an environment cube while one is set, and the gradient again when it is cleared', () => {
+    const pass = new FluidPass(new THREE.PerspectiveCamera(), createMatterUniforms());
+    const u = (pass as unknown as { compositeMaterial: THREE.ShaderMaterial }).compositeMaterial.uniforms;
+    expect(u.uEnv!.value).toBe(0);
+    const cube = new THREE.CubeTexture(Array.from({ length: 6 }, () => ({ width: 64, height: 64 })) as unknown as HTMLImageElement[]);
+    pass.setEnvironment(cube, 1.4, 0.5);
+    expect(u.uEnv!.value).toBe(1);
+    expect(u.uEnvGain!.value).toBeCloseTo(1.4);
+    expect(u.uEnvRot!.value).toBeCloseTo(0.5);
+    expect(u.uEnvLod!.value).toBe(6); // log2(64): the blurriest mip stands in for ambient light
+    pass.setEnvironment(null);
+    expect(u.uEnv!.value).toBe(0);
+    expect(u.tEnv!.value).toBeNull();
+    pass.dispose();
+  });
+
   it('disposes every target and material it owns, but not the shared particle geometry', () => {
     const pass = new FluidPass(new THREE.PerspectiveCamera(), createMatterUniforms());
     const geometry = sampleMatter(sphere(), 200, { seed: 5 });

@@ -25,6 +25,21 @@ export interface FluidPassOptions {
  *
  * Disable the pass (`enabled = false`) when no Liquid is showing; it costs several
  * full-screen passes. */
+/** What the liquid is made of, as the surface sees it. Forma derives one from the mesh
+ * material, so a chrome blob melts into mercury and a glass one into water. */
+export interface LiquidLook {
+  /** Body colour, and the colour a metal reflects in. */
+  tint: THREE.ColorRepresentation;
+  /** 0 dielectric (water, paint), 1 metal: no body, a tinted mirror. */
+  metal: number;
+  /** 0 clear (refracts what is behind it, absorbs by thickness), 1 opaque (paint, slime). */
+  opacity: number;
+  /** 0 sharp, 1 blurred: reflections and highlights. */
+  roughness: number;
+}
+
+const DEFAULT_LOOK: LiquidLook = { tint: 0x958cd6, metal: 0, opacity: 0, roughness: 0.15 };
+
 export class FluidPass extends Pass {
   readonly liquidUniforms: MatterLiquidUniforms;
   private readonly camera: THREE.PerspectiveCamera;
@@ -45,6 +60,7 @@ export class FluidPass extends Pass {
   private readonly texel = new THREE.Vector2(1, 1);
   private resolution: number;
   private blurRounds: number;
+  private envLodMax = 0;
   private width = 1;
   private height = 1;
 
@@ -94,9 +110,20 @@ void main(){
         uTexel: { value: new THREE.Vector2() }, uUnproj: { value: new THREE.Vector4(1, 1, 0, 0) },
         uMix: { value: 0 }, uTime: { value: 0 }, uShimmer: { value: 0 },
         uTint: { value: new THREE.Color(0x958cd6) }, uSkyLo: { value: new THREE.Color(0x1d1a36) }, uSkyHi: { value: new THREE.Color(0x888599) },
+        // The world the liquid reflects (a cube map of the scene's environment). Without
+        // it the surface reflects the two-colour gradient above.
+        tEnv: { value: null }, uEnv: { value: 0 }, uEnvLod: { value: 0 }, uEnvGain: { value: 1 }, uEnvRot: { value: 0 },
+        uViewToWorld: { value: new THREE.Matrix3() },
+        uMetal: { value: 0 }, uOpaque: { value: 0 }, uRough: { value: 0.15 },
       },
       vertexShader: QUAD_VS,
-      fragmentShader: /* glsl */ `uniform sampler2D tDiffuse,tFluid,tThick; uniform vec2 uTexel; uniform vec4 uUnproj; uniform float uMix,uTime,uShimmer; uniform vec3 uTint,uSkyLo,uSkyHi; varying vec2 vUv;
+      fragmentShader: /* glsl */ `uniform sampler2D tDiffuse,tFluid,tThick; uniform samplerCube tEnv; uniform vec2 uTexel; uniform vec4 uUnproj; uniform float uMix,uTime,uShimmer,uEnv,uEnvLod,uEnvGain,uEnvRot,uMetal,uOpaque,uRough; uniform vec3 uTint,uSkyLo,uSkyHi; uniform mat3 uViewToWorld; varying vec2 vUv;
+// The environment in a view-space direction, blurred by roughness (the cube's mips).
+vec3 envAt(vec3 dirView,float lod){
+  vec3 d=uViewToWorld*dirView; float c=cos(uEnvRot),s=sin(uEnvRot);
+  d=vec3(c*d.x+s*d.z,d.y,-s*d.x+c*d.z);
+  return textureCubeLodEXT(tEnv,d,lod).rgb*uEnvGain;
+}
 // View position from the camera's real projection, so an off-centre or zoomed lens
 // (see viewUnprojection) reconstructs straight.
 vec3 vpos(vec2 uv,float d){ return vec3((uv*2.-1.+uUnproj.zw)*uUnproj.xy,-1.)*d; }
@@ -122,16 +149,42 @@ void main(){
     N=normalize(N+vec3(w.x,0.,w.y)*.08*uShimmer*up);
   }
   vec3 V=normalize(-P); float ndv=max(dot(N,V),0.);
-  float fres=.03+.97*pow(1.-ndv,5.);
   float th=texture2D(tThick,vUv).r;
   vec3 behind=texture2D(tDiffuse,clamp(vUv+N.xy*.09,0.,1.)).rgb;
-  vec3 absorb=exp(-(vec3(1.)-uTint)*th*2.6);
-  vec3 body=behind*absorb+uTint*(1.-exp(-th*1.4))*.36;
-  vec3 refl=mix(uSkyLo,uSkyHi,N.y*.5+.5)*1.4;
-  vec3 L1=normalize(vec3(-.45,.75,.55)), L2=normalize(vec3(.6,.2,.8));
   float inner=smoothstep(.62,.95,fl.g);
-  float spec=(pow(max(dot(N,normalize(L1+V)),0.),90.)*1.8+pow(max(dot(N,normalize(L2+V)),0.),28.)*.35)*inner;
-  vec3 col=mix(body,refl,fres*inner)+spec+uTint*pow(1.-ndv,3.)*.3;
+  vec3 L1=normalize(vec3(-.45,.75,.55)), L2=normalize(vec3(.6,.2,.8));
+  vec3 col;
+  if(uEnv>0.){
+    // Physically-shaped: Fresnel from the material's base reflectance, reflections from the
+    // real environment, a body that is either clear, painted or absent (metal).
+    // Normals at the silhouette come from depth edges and are unreliable; shade those
+    // pixels with a camera-facing normal instead, so a metal rim reflects rather than goes black.
+    vec3 Ns=normalize(mix(vec3(0.,0.,1.),N,.15+.85*inner));
+    float ndvs=max(dot(Ns,V),0.);
+    float lodRough=uRough*uEnvLod;
+    vec3 R=reflect(-V,Ns);
+    vec3 refl=envAt(R,lodRough);
+    vec3 irradiance=envAt(Ns,uEnvLod);
+    vec3 F0=mix(vec3(.04),uTint,uMetal);
+    vec3 F=F0+(1.-F0)*pow(1.-ndvs,5.);
+    // Clear liquid: what is behind it, tinted by how much liquid it passes through. Only a
+    // coloured liquid scatters light of its own; clear water stays clear.
+    float sat=max(max(uTint.r,uTint.g),uTint.b)-min(min(uTint.r,uTint.g),uTint.b);
+    vec3 clear=behind*exp(-(vec3(1.)-uTint)*th*2.6)+uTint*(1.-exp(-th*1.4))*.36*(.12+.88*sat);
+    // Painted liquid: the tint lit by the environment and the key light.
+    vec3 paint=uTint*(irradiance*.9+.28*max(dot(Ns,L1),0.)+.06);
+    vec3 body=mix(clear,paint,uOpaque)*(1.-uMetal);
+    float shine=mix(120.,10.,uRough);
+    float spec=(pow(max(dot(N,normalize(L1+V)),0.),shine)*1.6+pow(max(dot(N,normalize(L2+V)),0.),shine*.35)*.3)*inner*(1.-uRough*.6);
+    col=body*(1.-F)+refl*F+spec+uTint*pow(1.-ndvs,3.)*.12*(1.-uMetal);
+  } else {
+    float fres=.03+.97*pow(1.-ndv,5.);
+    vec3 absorb=exp(-(vec3(1.)-uTint)*th*2.6);
+    vec3 body=behind*absorb+uTint*(1.-exp(-th*1.4))*.36;
+    vec3 refl=mix(uSkyLo,uSkyHi,N.y*.5+.5)*1.4;
+    float spec=(pow(max(dot(N,normalize(L1+V)),0.),90.)*1.8+pow(max(dot(N,normalize(L2+V)),0.),28.)*.35)*inner;
+    col=mix(body,refl,fres*inner)+spec+uTint*pow(1.-ndv,3.)*.3;
+  }
   if(any(isnan(col))||any(isinf(col))) col=scene.rgb;
   gl_FragColor=vec4(mix(scene.rgb,col,cov),scene.a);
 }`,
@@ -159,6 +212,31 @@ void main(){
     (u.uTint!.value as THREE.Color).set(tint);
     (u.uSkyLo!.value as THREE.Color).set(skyLow);
     (u.uSkyHi!.value as THREE.Color).set(skyHigh);
+  }
+
+  /** What the liquid is made of (see `LiquidLook`). Omitted fields keep their last value. */
+  setLook(look: Partial<LiquidLook>): void {
+    const u = this.compositeMaterial.uniforms;
+    if (look.tint !== undefined) (u.uTint!.value as THREE.Color).set(look.tint);
+    if (look.metal !== undefined) u.uMetal!.value = Math.min(1, Math.max(0, look.metal));
+    if (look.opacity !== undefined) u.uOpaque!.value = Math.min(1, Math.max(0, look.opacity));
+    if (look.roughness !== undefined) u.uRough!.value = Math.min(1, Math.max(0, look.roughness));
+  }
+
+  /** The world the surface reflects: a cube map of the scene's environment, ideally with
+   * mipmaps (blurred for rough liquid and for the body's ambient light). `gain` scales its
+   * brightness; `rotationY` turns it (radians), as `scene.environmentRotation`. Pass null
+   * to go back to the two-colour gradient. */
+  setEnvironment(cube: THREE.CubeTexture | null, gain = 1, rotationY = 0): void {
+    const u = this.compositeMaterial.uniforms;
+    u.tEnv!.value = cube;
+    u.uEnv!.value = cube ? 1 : 0;
+    u.uEnvGain!.value = gain;
+    u.uEnvRot!.value = rotationY;
+    // The cube's mip count: the top level is the blurriest, an irradiance stand-in.
+    const size = (cube?.image as unknown as { width?: number }[] | undefined)?.[0]?.width ?? 128;
+    this.envLodMax = Math.max(0, Math.floor(Math.log2(size)));
+    u.uEnvLod!.value = this.envLodMax;
   }
 
   setQuality(opts: FluidPassOptions): void {
@@ -208,6 +286,7 @@ void main(){
     }
     renderer.setClearColor(this.clearColor, clearAlpha);
     const u = this.compositeMaterial.uniforms;
+    (u.uViewToWorld!.value as THREE.Matrix3).setFromMatrix4(this.camera.matrixWorld);
     u.tDiffuse!.value = readBuffer.texture; u.tFluid!.value = src.texture; u.tThick!.value = this.thickRT.texture;
     this.quad.material = this.compositeMaterial;
     renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
