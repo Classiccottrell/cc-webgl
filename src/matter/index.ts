@@ -15,7 +15,7 @@ export type { MatterCursorMode, MatterUniforms, MatterLiquidUniforms } from './m
 export { sampleMatter, seededRandom, DEFAULT_FRAGMENTS } from './sample.js';
 export type { SampleMatterOptions, FragmentTier } from './sample.js';
 export { FluidPass } from './FluidPass.js';
-export type { FluidPassOptions } from './FluidPass.js';
+export type { FluidPassOptions, LiquidLook } from './FluidPass.js';
 export { matterQuality } from './quality.js';
 export type { MatterQuality } from './quality.js';
 export { viewUnprojection, pixelsPerUnit } from './projection.js';
